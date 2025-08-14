@@ -4,23 +4,31 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sofi Cashflow Tracker</title>
+
+  <!-- Tailwind for quick styling -->
   <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
+
+  <!-- React + ReactDOM -->
+  <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
+
+  <!-- Babel for JSX in-browser -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Recharts -->
   <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js"></script>
 
-  <!-- Firebase v8 Namespaced SDK -->
+  <!-- Firebase v8 (namespaced) -->
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
   <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 </head>
-<body class="bg-gray-100">
+<body class="bg-gray-50 min-h-screen p-4">
   <div id="root"></div>
 
   <script type="text/babel">
     // Firebase config
-    const firebaseConfig = {
+    var firebaseConfig = {
       apiKey: "AIzaSyCj4VxtalspWcMmrilRlZ3zld3vg9_y86k",
       authDomain: "jimmy-apps-a3bc2.firebaseapp.com",
       projectId: "jimmy-apps-a3bc2",
@@ -29,127 +37,108 @@
       appId: "1:598334691661:web:6d773624e8f19c8dc97f04"
     };
     firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
     const db = firebase.firestore();
+    const auth = firebase.auth();
 
-    const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
+    const { useState, useEffect } = React;
+    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = Recharts;
 
     function App() {
-      const [user, setUser] = React.useState(null);
-      const [items, setItems] = React.useState([]);
-      const [amount, setAmount] = React.useState("");
-      const [desc, setDesc] = React.useState("");
+      const [user, setUser] = useState(null);
+      const [items, setItems] = useState([]);
+      const [description, setDescription] = useState("");
+      const [amount, setAmount] = useState("");
 
-      React.useEffect(() => {
-        const unsub = auth.onAuthStateChanged(u => {
+      useEffect(() => {
+        auth.onAuthStateChanged(u => {
           setUser(u);
           if (u) {
-            return db.collection("transactions")
+            db.collection("transactions")
               .where("uid", "==", u.uid)
               .orderBy("date", "asc")
-              .onSnapshot(snap => {
-                setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+              .onSnapshot(snapshot => {
+                setItems(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
               });
-          } else {
-            setItems([]);
           }
         });
-        return () => unsub();
       }, []);
 
-      const addItem = async () => {
-        if (!amount || !desc) return;
-        await db.collection("transactions").add({
+      const addItem = () => {
+        if (!description || !amount) return;
+        db.collection("transactions").add({
           uid: user.uid,
+          description,
           amount: parseFloat(amount),
-          desc,
-          date: new Date().toISOString()
+          date: new Date()
         });
+        setDescription("");
         setAmount("");
-        setDesc("");
       };
 
-      const balance = items.reduce((sum, it) => sum + it.amount, 0);
+      const signIn = () => {
+        auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
+      };
 
-      const chartData = items.reduce((arr, it, i) => {
-        const bal = (i === 0 ? 0 : arr[i - 1].balance) + it.amount;
-        arr.push({ date: new Date(it.date).toLocaleDateString(), balance: bal });
-        return arr;
-      }, []);
+      const signOut = () => {
+        auth.signOut();
+      };
+
+      const chartData = items.map(item => ({
+        name: new Date(item.date.seconds * 1000).toLocaleDateString(),
+        balance: item.amount
+      }));
 
       return (
-        <div className="max-w-xl mx-auto p-4">
+        <div className="max-w-2xl mx-auto bg-white p-4 shadow rounded">
           <h1 className="text-2xl font-bold mb-4">Sofi Cashflow Tracker</h1>
           {!user ? (
-            <button
-              className="bg-blue-500 text-white px-4 py-2 rounded"
-              onClick={() => {
-                const provider = new firebase.auth.GoogleAuthProvider();
-                auth.signInWithPopup(provider);
-              }}
-            >
+            <button onClick={signIn} className="px-4 py-2 bg-blue-600 text-white rounded">
               Sign in with Google
             </button>
           ) : (
             <>
-              <div className="mb-4 flex justify-between items-center">
-                <span>Welcome, {user.displayName}</span>
-                <button
-                  className="bg-gray-500 text-white px-2 py-1 rounded"
-                  onClick={() => auth.signOut()}
-                >
+              <div className="mb-4 flex justify-between">
+                <span>Signed in as {user.displayName}</span>
+                <button onClick={signOut} className="px-4 py-2 bg-gray-300 rounded">
                   Sign out
                 </button>
               </div>
-              <div className="mb-4">
+              <div className="mb-4 flex gap-2">
+                <input
+                  type="text"
+                  value={description}
+                  onChange={e => setDescription(e.target.value)}
+                  placeholder="Description"
+                  className="border px-2 py-1 flex-1"
+                />
                 <input
                   type="number"
                   value={amount}
                   onChange={e => setAmount(e.target.value)}
                   placeholder="Amount"
-                  className="border p-2 mr-2"
+                  className="border px-2 py-1 w-24"
                 />
-                <input
-                  type="text"
-                  value={desc}
-                  onChange={e => setDesc(e.target.value)}
-                  placeholder="Description"
-                  className="border p-2 mr-2"
-                />
-                <button
-                  onClick={addItem}
-                  className="bg-green-500 text-white px-4 py-2 rounded"
-                >
+                <button onClick={addItem} className="px-4 py-1 bg-green-600 text-white rounded">
                   Add
                 </button>
               </div>
-              <div className="mb-4">
-                <strong>Balance:</strong> ${balance.toFixed(2)}
-              </div>
-              <div style={{ height: 300 }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-                    <defs>
-                      <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="#8884d8" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="date" />
-                    <YAxis />
-                    <Tooltip />
-                    <Area type="monotone" dataKey="balance" stroke="#8884d8" fillOpacity={1} fill="url(#colorBal)" />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
-              <ul>
-                {items.map(it => (
-                  <li key={it.id} className="border-b py-1">
-                    {it.desc}: ${it.amount.toFixed(2)}
+              <ul className="mb-4">
+                {items.map(item => (
+                  <li key={item.id} className="flex justify-between border-b py-1">
+                    <span>{item.description}</span>
+                    <span>${item.amount.toFixed(2)}</span>
                   </li>
                 ))}
               </ul>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={chartData}>
+                  <CartesianGrid stroke="#ccc" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="balance" stroke="#8884d8" />
+                </LineChart>
+              </ResponsiveContainer>
             </>
           )}
         </div>
