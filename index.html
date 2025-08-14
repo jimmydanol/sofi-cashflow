@@ -9,9 +9,11 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/babel-standalone@6/babel.min.js"></script>
   <script src="https://unpkg.com/recharts@2.12.7/umd/Recharts.min.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-auth.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.13.1/firebase-firestore.js"></script>
+
+  <!-- Firebase v8 Namespaced SDK -->
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
 </head>
 <body class="bg-gray-100">
   <div id="root"></div>
@@ -26,14 +28,11 @@
       messagingSenderId: "598334691661",
       appId: "1:598334691661:web:6d773624e8f19c8dc97f04"
     };
-    const app = firebase.initializeApp(firebaseConfig);
+    firebase.initializeApp(firebaseConfig);
     const auth = firebase.auth();
     const db = firebase.firestore();
 
-    // Recharts safe import
-    const Re = window.Recharts || {};
-    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } = Re;
-    const HAS_RECHARTS = !!Re.AreaChart;
+    const { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } = window.Recharts;
 
     function App() {
       const [user, setUser] = React.useState(null);
@@ -45,9 +44,9 @@
         const unsub = auth.onAuthStateChanged(u => {
           setUser(u);
           if (u) {
-            db.collection("transactions")
+            return db.collection("transactions")
               .where("uid", "==", u.uid)
-              .orderBy("date", "desc")
+              .orderBy("date", "asc")
               .onSnapshot(snap => {
                 setItems(snap.docs.map(d => ({ id: d.id, ...d.data() })));
               });
@@ -72,13 +71,11 @@
 
       const balance = items.reduce((sum, it) => sum + it.amount, 0);
 
-      const chartData = [...items]
-        .reverse()
-        .reduce((arr, it, i) => {
-          const bal = (i === 0 ? 0 : arr[i - 1].balance) + it.amount;
-          arr.push({ date: new Date(it.date).toLocaleDateString(), balance: bal });
-          return arr;
-        }, []);
+      const chartData = items.reduce((arr, it, i) => {
+        const bal = (i === 0 ? 0 : arr[i - 1].balance) + it.amount;
+        arr.push({ date: new Date(it.date).toLocaleDateString(), balance: bal });
+        return arr;
+      }, []);
 
       return (
         <div className="max-w-xl mx-auto p-4">
@@ -94,7 +91,7 @@
               Sign in with Google
             </button>
           ) : (
-            <div>
+            <>
               <div className="mb-4 flex justify-between items-center">
                 <span>Welcome, {user.displayName}</span>
                 <button
@@ -129,31 +126,23 @@
               <div className="mb-4">
                 <strong>Balance:</strong> ${balance.toFixed(2)}
               </div>
-
               <div style={{ height: 300 }}>
-                {HAS_RECHARTS ? (
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
-                      <defs>
-                        <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopOpacity={0.3}/>
-                          <stop offset="95%" stopOpacity={0}/>
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="date" />
-                      <YAxis />
-                      <Tooltip />
-                      <Area type="monotone" dataKey="balance" stroke="#8884d8" fillOpacity={1} fill="url(#colorBal)" />
-                    </AreaChart>
-                  </ResponsiveContainer>
-                ) : (
-                  <div className="p-3 text-sm text-slate-600">
-                    Chart library didn’t load; everything else works.
-                  </div>
-                )}
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8884d8" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" />
+                    <YAxis />
+                    <Tooltip />
+                    <Area type="monotone" dataKey="balance" stroke="#8884d8" fillOpacity={1} fill="url(#colorBal)" />
+                  </AreaChart>
+                </ResponsiveContainer>
               </div>
-
               <ul>
                 {items.map(it => (
                   <li key={it.id} className="border-b py-1">
@@ -161,7 +150,7 @@
                   </li>
                 ))}
               </ul>
-            </div>
+            </>
           )}
         </div>
       );
