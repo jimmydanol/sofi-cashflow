@@ -3,151 +3,94 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Firebase + Recharts Demo</title>
-
-  <!-- TailwindCSS for styling -->
+  <title>Sofi Cashflow</title>
+  <!-- Tailwind (ok for testing, replace with CLI in prod if needed) -->
   <script src="https://cdn.tailwindcss.com"></script>
-
   <!-- React + ReactDOM -->
-  <script src="https://unpkg.com/react@17/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js"></script>
-
+  <script src="https://unpkg.com/react@17/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@17/umd/react-dom.development.js" crossorigin></script>
+  <!-- Babel for JSX in browser (testing only) -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <!-- Recharts -->
   <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
-
-  <!-- Firebase v8 SDK -->
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
-
-  <!-- Babel (for JSX in-browser) -->
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase (Compat SDK for browser use without build tools) -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js"></script>
 </head>
-<body class="bg-gray-100 min-h-screen flex items-center justify-center">
-  <div id="root" class="w-full max-w-4xl p-4"></div>
+<body class="bg-gray-100 text-gray-900">
+  <div id="root" class="p-6"></div>
 
   <script type="text/babel">
     const { useState, useEffect } = React;
-    const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } = Recharts;
+    const { LineChart, Line, CartesianGrid, XAxis, YAxis, Tooltip, ResponsiveContainer } = Recharts;
 
     // Firebase config
     const firebaseConfig = {
-      apiKey: "AIzaSyCj4VxtalspWcMmrilRlZ3zld3vg9_y86k",
-      authDomain: "jimmy-apps-a3bc2.firebaseapp.com",
-      projectId: "jimmy-apps-a3bc2",
-      storageBucket: "jimmy-apps-a3bc2.appspot.com",
-      messagingSenderId: "598334691661",
-      appId: "1:598334691661:web:6d773624e8f19c8dc97f04"
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+      storageBucket: "YOUR_PROJECT_ID.appspot.com",
+      messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+      appId: "YOUR_APP_ID"
     };
     firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
 
     function App() {
       const [user, setUser] = useState(null);
-      const [transactions, setTransactions] = useState([]);
-      const [amount, setAmount] = useState("");
-      const [description, setDescription] = useState("");
+      const [data, setData] = useState([
+        { name: 'Jan', cash: 400 },
+        { name: 'Feb', cash: 300 },
+        { name: 'Mar', cash: 500 }
+      ]);
 
       useEffect(() => {
-        const unsubscribeAuth = auth.onAuthStateChanged(user => {
-          setUser(user);
-          if (user) {
-            db.collection("transactions")
-              .where("uid", "==", user.uid)
-              .orderBy("createdAt", "desc")
-              .onSnapshot(snapshot => {
-                const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setTransactions(data);
-              });
-          } else {
-            setTransactions([]);
-          }
-        });
-        return unsubscribeAuth;
+        firebase.auth().onAuthStateChanged(u => setUser(u));
       }, []);
 
       const signIn = () => {
-        auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-      };
-      const signOut = () => auth.signOut();
-
-      const addTransaction = (e) => {
-        e.preventDefault();
-        if (!amount || !description) return;
-        db.collection("transactions").add({
-          uid: user.uid,
-          amount: parseFloat(amount),
-          description,
-          createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        setAmount("");
-        setDescription("");
+        const provider = new firebase.auth.GoogleAuthProvider();
+        firebase.auth().signInWithPopup(provider);
       };
 
-      const balance = transactions.reduce((sum, t) => sum + t.amount, 0);
+      const signOut = () => firebase.auth().signOut();
 
       return (
-        <div className="bg-white p-6 rounded-lg shadow w-full">
+        <div className="max-w-3xl mx-auto bg-white shadow-lg rounded-lg p-6">
           {!user ? (
-            <div className="text-center">
-              <button onClick={signIn} className="bg-blue-500 text-white px-4 py-2 rounded">
-                Sign in with Google
-              </button>
-            </div>
+            <button
+              onClick={signIn}
+              className="bg-blue-500 hover:bg-blue-600 text-white px-4 py-2 rounded"
+            >
+              Sign in with Google
+            </button>
           ) : (
-            <>
-              <div className="flex justify-between items-center mb-4">
-                <h1 className="text-xl font-bold">Welcome, {user.displayName}</h1>
-                <button onClick={signOut} className="bg-red-500 text-white px-3 py-1 rounded">Sign Out</button>
+            <div>
+              <div className="flex justify-between mb-4">
+                <span>Welcome, {user.displayName}</span>
+                <button
+                  onClick={signOut}
+                  className="bg-gray-300 hover:bg-gray-400 px-3 py-1 rounded"
+                >
+                  Sign Out
+                </button>
               </div>
-              <div className="mb-4">
-                <h2 className="text-lg font-semibold">Balance: ${balance.toFixed(2)}</h2>
-              </div>
-              <form onSubmit={addTransaction} className="flex space-x-2 mb-4">
-                <input
-                  type="number"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value)}
-                  placeholder="Amount"
-                  className="border px-2 py-1 rounded w-24"
-                />
-                <input
-                  type="text"
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  placeholder="Description"
-                  className="border px-2 py-1 rounded flex-1"
-                />
-                <button type="submit" className="bg-green-500 text-white px-4 py-1 rounded">Add</button>
-              </form>
-              <div style={{ width: "100%", height: 300 }}>
-                <ResponsiveContainer>
-                  <LineChart data={transactions}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="description" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Line type="monotone" dataKey="amount" stroke="#8884d8" />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-              <ul className="mt-4">
-                {transactions.map(t => (
-                  <li key={t.id} className="border-b py-1 flex justify-between">
-                    <span>{t.description}</span>
-                    <span>${t.amount.toFixed(2)}</span>
-                  </li>
-                ))}
-              </ul>
-            </>
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={data}>
+                  <Line type="monotone" dataKey="cash" stroke="#8884d8" />
+                  <CartesianGrid stroke="#ccc" />
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
           )}
         </div>
       );
     }
 
-    ReactDOM.render(<App />, document.getElementById("root"));
+    ReactDOM.render(<App />, document.getElementById('root'));
   </script>
 </body>
 </html>
