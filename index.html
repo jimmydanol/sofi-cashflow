@@ -22,7 +22,9 @@
 
 <script type="text/babel">
 const {useState, useEffect, useMemo} = React;
-const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } = Recharts;
+const Re = window.Recharts || {};
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } = Re;
+const HAS_RECHARTS = !!Re.AreaChart;
 
 /***************************
  * Firebase INIT (Jimmy's project)
@@ -412,21 +414,25 @@ function App(){
           <Card>
             <SectionTitle>Projection chart</SectionTitle>
             <div className="h-64">
+              {HAS_RECHARTS ? (
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#8884d8" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
+                      <stop offset="5%" stopOpacity={0.3}/>
+                      <stop offset="95%" stopOpacity={0}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="date" />
                   <YAxis />
                   <Tooltip />
-                  <Area type="monotone" dataKey="balance" stroke="#8884d8" fillOpacity={1} fill="url(#colorBal)" />
+                  <Area type="monotone" dataKey="balance" />
                 </AreaChart>
               </ResponsiveContainer>
+            ) : (
+              <div className="p-3 text-sm text-slate-600">Chart library didn’t load; everything else works.</div>
+            )}
             </div>
           </Card>
         </section>
