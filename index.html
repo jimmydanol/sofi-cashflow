@@ -3,359 +3,525 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sofi Cashflow Tracker (Cloud Sync)</title>
+  <title>Cashflow Pro — Multi‑Account, Budgets, Cloud Sync</title>
   <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
 
-  <!-- Firebase SDKs (compat) -->
+  <!-- Firebase SDKs (compat so we can run in a single HTML file) -->
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore-compat.js"></script>
+
+  <!-- Recharts (UMD) for charts -->
+  <script src="https://unpkg.com/recharts/umd/Recharts.min.js"></script>
 </head>
 <body class="bg-slate-50">
-  <div id="root"></div>
+<div id="root"></div>
 
-  <script type="text/babel">
-    const { useState, useEffect, useMemo } = React;
+<script type="text/babel">
+const {useState, useEffect, useMemo} = React;
+const { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, AreaChart, Area } = Recharts;
 
-    // --- Firebase init (your real config) ---
-    const firebaseConfig = {
-      apiKey: "AIzaSyCj4VxtalspWcMmrilRlZ3zld3vg9_y86k",
-      authDomain: "jimmy-apps-a3bc2.firebaseapp.com",
-      projectId: "jimmy-apps-a3bc2",
-      storageBucket: "jimmy-apps-a3bc2.firebasestorage.app",
-      messagingSenderId: "598334691661",
-      appId: "1:598334691661:web:6d773624e8f19c8dc97f04"
-    };
-    firebase.initializeApp(firebaseConfig);
-    const auth = firebase.auth();
-    const db = firebase.firestore();
+/***************************
+ * Firebase INIT (Jimmy's project)
+ ***************************/
+const firebaseConfig = {
+  apiKey: "AIzaSyCj4VxtalspWcMmrilRlZ3zld3vg9_y86k",
+  authDomain: "jimmy-apps-a3bc2.firebaseapp.com",
+  projectId: "jimmy-apps-a3bc2",
+  storageBucket: "jimmy-apps-a3bc2.firebasestorage.app",
+  messagingSenderId: "598334691661",
+  appId: "1:598334691661:web:6d773624e8f19c8dc97f04"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.firestore();
 
-    // --- helpers ---
-    const FREQUENCIES = [
-      { key: "WEEKLY",   label: "Weekly" },
-      { key: "BIWEEKLY", label: "Biweekly" },
-      { key: "MONTHLY",  label: "Monthly" },
-    ];
-    const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
-    const toISODate = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10);
-    const parseISO = (s) => { const [y,m,d]=s.split("-").map(Number); return new Date(y,m-1,d); };
-    const addDays = (date,n)=>{ const d=new Date(date); d.setDate(d.getDate()+n); return d; };
-    const addMonths=(date,n)=>{ const d=new Date(date); d.setMonth(d.getMonth()+n); return d; };
-    function nextBiweekly(from, anchor){
-      const oneDay=86400000, start=new Date(anchor), f=new Date(from);
-      const diffDays=Math.floor((f-start)/oneDay);
-      const mod=((diffDays%14)+14)%14;
-      return addDays(f, mod===0 ? 0 : 14-mod);
+/***************************
+ * Helpers
+ ***************************/
+const todayISO = () => toISODate(new Date());
+function toISODate(d){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10); }
+function parseISO(s){ const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); }
+function addDays(date, n){ const d=new Date(date); d.setDate(d.getDate()+n); return d; }
+function addMonths(date, n){ const d=new Date(date); d.setMonth(d.getMonth()+n); return d; }
+const uid = () => Math.random().toString(36).slice(2) + Date.now().toString(36);
+
+const FREQUENCIES = [
+  { key: 'WEEKLY', label: 'Weekly' },
+  { key: 'BIWEEKLY', label: 'Biweekly' },
+  { key: 'MONTHLY', label: 'Monthly' },
+];
+function nextBiweekly(from, anchor){
+  const oneDay = 86400000; const start = new Date(anchor); const f = new Date(from);
+  const diffDays = Math.floor((f - start)/oneDay); const mod = ((diffDays % 14) + 14) % 14;
+  return addDays(f, mod===0 ? 0 : 14-mod);
+}
+function enumerateOccurrences(rule, horizonStart, horizonEnd){
+  const out = []; const {frequency, anchorDate} = rule; if(!frequency || !anchorDate) return out;
+  let cur; const start = parseISO(horizonStart); const end = parseISO(horizonEnd); const anchor = parseISO(anchorDate);
+  if(frequency==='WEEKLY'){
+    cur = new Date(start); while(cur.getDay()!==anchor.getDay()) cur = addDays(cur, 1);
+    while(cur<=end){ out.push(toISODate(cur)); cur = addDays(cur, 7); }
+  }else if(frequency==='BIWEEKLY'){
+    cur = nextBiweekly(start, anchor);
+    while(cur<=end){ out.push(toISODate(cur)); cur = addDays(cur, 14); }
+  }else if(frequency==='MONTHLY'){
+    let temp = new Date(start); temp.setDate(anchor.getDate()); if(temp<start) temp = addMonths(temp, 1);
+    while(temp<=end){
+      const y=temp.getFullYear(), m=temp.getMonth(); const daysInMonth = new Date(y, m+1, 0).getDate();
+      const day = Math.min(anchor.getDate(), daysInMonth); const d = new Date(y, m, day);
+      if(d>=start && d<=end) out.push(toISODate(d)); temp = addMonths(temp, 1);
     }
-    function enumerateOccurrences(rule, horizonStart, horizonEnd){
-      const out=[]; const {frequency, anchorDate}=rule; if(!frequency||!anchorDate) return out;
-      let cur; const start=parseISO(horizonStart), end=parseISO(horizonEnd), anchor=parseISO(anchorDate);
-      if(frequency==="WEEKLY"){
-        cur=new Date(start); while(cur.getDay()!==anchor.getDay()) cur=addDays(cur,1);
-        while(cur<=end){ out.push(toISODate(cur)); cur=addDays(cur,7); }
-      }else if(frequency==="BIWEEKLY"){
-        cur=nextBiweekly(start, anchor);
-        while(cur<=end){ out.push(toISODate(cur)); cur=addDays(cur,14); }
-      }else if(frequency==="MONTHLY"){
-        let temp=new Date(start); temp.setDate(anchor.getDate()); if(temp<start) temp=addMonths(temp,1);
-        while(temp<=end){
-          const y=temp.getFullYear(), m=temp.getMonth();
-          const daysInMonth=new Date(y,m+1,0).getDate();
-          const day=Math.min(anchor.getDate(), daysInMonth);
-          const d=new Date(y,m,day);
-          if(d>=start && d<=end) out.push(toISODate(d));
-          temp=addMonths(temp,1);
-        }
-      }
-      return out;
-    }
-    const Card = ({children, extra}) => (
-      <div className={`rounded-2xl bg-white p-4 shadow-sm border border-slate-200 ${extra||""}`}>{children}</div>
-    );
+  }
+  return out;
+}
 
-    // --- App ---
-    function App(){
-      const [user,setUser]=useState(null);
+/***************************
+ * UI bits
+ ***************************/
+function Card({children, className}){ return <div className={`rounded-2xl bg-white p-4 shadow-sm border border-slate-200 ${className||''}`}>{children}</div>; }
+function SectionTitle({children}){ return <h2 className="text-lg font-semibold mb-3">{children}</h2>; }
 
-      const [accountName,setAccountName]=useState("SoFi Checking");
-      const [startingBalance,setStartingBalance]=useState(0);
-      const [asOfDate,setAsOfDate]=useState(toISODate(new Date()));
-      const [lookaheadDays,setLookaheadDays]=useState(45);
-      const [oneOffs,setOneOffs]=useState([]);       // {id,date,amount,note}
-      const [recurrings,setRecurrings]=useState([]); // {id,label,amount,rule{frequency,anchorDate},endDate?}
+/***************************
+ * Data model (Firestore)
+ * users/{uid}/settings/profile
+ * users/{uid}/accounts/{accountId} => {name, asOfDate, startingBalance}
+ * users/{uid}/transactions/{txId} => {date, amount, note, accountId, kind: 'oneoff'|'recur'|'transfer', cat?, transfer:{toAccountId?}}
+ * users/{uid}/recurrings/{recId} => {label, amount, rule:{frequency, anchorDate}, endDate?, accountId, cat?}
+ * users/{uid}/budgets/{month} => { categories: { [cat]: limitNumber } }
+ ***************************/
 
-      // Auth
-      useEffect(()=>auth.onAuthStateChanged(setUser),[]);
+function useAuth(){
+  const [user, setUser] = useState(null);
+  useEffect(()=> auth.onAuthStateChanged(setUser),[]);
+  return user;
+}
 
-      // Firestore load
-      useEffect(()=>{
-        if(!user) return;
-        const ref=db.collection("cashflow").doc(user.uid);
-        return ref.onSnapshot(doc=>{
-          if(doc.exists){
-            const d=doc.data();
-            setAccountName(d.accountName ?? "SoFi Checking");
-            setStartingBalance(d.startingBalance ?? 0);
-            setAsOfDate(d.asOfDate ?? toISODate(new Date()));
-            setLookaheadDays(d.lookaheadDays ?? 45);
-            setOneOffs(d.oneOffs ?? []);
-            setRecurrings(d.recurrings ?? []);
-          }
+function useCollection(refBuilder, deps){
+  const [items, setItems] = useState([]);
+  useEffect(()=>{
+    const ref = refBuilder(); if(!ref) return; return ref.onSnapshot(snap=>{
+      const arr = []; snap.forEach(doc=> arr.push({id:doc.id, ...doc.data()})); setItems(arr);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+  return items;
+}
+
+function App(){
+  const user = useAuth();
+  const [cats, setCats] = useState(['Income','Bills','Groceries','Dining','Transfer','Other']);
+
+  // Accounts
+  const accounts = useCollection(() => user && db.collection('users').doc(user.uid).collection('accounts'), [user]);
+  const transactions = useCollection(() => user && db.collection('users').doc(user.uid).collection('transactions'), [user]);
+  const recurrings = useCollection(() => user && db.collection('users').doc(user.uid).collection('recurrings'), [user]);
+  const [lookaheadDays, setLookaheadDays] = useState(60);
+
+  // Selected account (default first or create SoFi Checking if none)
+  useEffect(()=>{
+    if(!user) return;
+    db.collection('users').doc(user.uid).collection('accounts').get().then(s=>{
+      if(s.empty){
+        const id = db.collection('users').doc(user.uid).collection('accounts').doc().id;
+        db.collection('users').doc(user.uid).collection('accounts').doc(id).set({
+          name:'SoFi Checking',
+          startingBalance:0,
+          asOfDate: todayISO()
         });
-      },[user]);
-
-      // Firestore save (simple debounce)
-      useEffect(()=>{
-        if(!user) return;
-        const ref=db.collection("cashflow").doc(user.uid);
-        const payload={accountName, startingBalance, asOfDate, lookaheadDays, oneOffs, recurrings};
-        const t=setTimeout(()=>ref.set(payload), 250);
-        return ()=>clearTimeout(t);
-      },[user,accountName,startingBalance,asOfDate,lookaheadDays,oneOffs,recurrings]);
-
-      const horizonStart=asOfDate;
-      const horizonEnd=toISODate(addDays(parseISO(asOfDate), lookaheadDays));
-
-      const upcoming=useMemo(()=>{
-        const offs=oneOffs
-          .filter(t=>t.date>=horizonStart && t.date<=horizonEnd)
-          .map(t=>({...t, kind:"One-off"}));
-        const rec=[];
-        for(const r of recurrings){
-          const dates=enumerateOccurrences(r.rule, horizonStart, horizonEnd).filter(d=>!r.endDate || d<=r.endDate);
-          for(const d of dates){
-            rec.push({id:`${r.id}-${d}`, date:d, amount:r.amount, note:r.label, kind:r.rule.frequency});
-          }
-        }
-        const all=[...offs, ...rec].sort((a,b)=>a.date.localeCompare(b.date));
-        let balance=Number(startingBalance);
-        const withRun=all.map(t=>{ balance += Number(t.amount); return {...t, runBalance: balance}; });
-        const projectedEnd=withRun.length ? withRun[withRun.length-1].runBalance : Number(startingBalance);
-        const firstNegative=withRun.find(t=>t.runBalance<0);
-        return {items:withRun, projectedEnd, firstNegative};
-      },[oneOffs,recurrings,startingBalance,horizonStart,horizonEnd]);
-
-      // quick add (one-off)
-      const [qDate,setQDate]=useState(toISODate(new Date()));
-      const [qAmount,setQAmount]=useState(0);
-      const [qNote,setQNote]=useState("");
-      function addOneOff(){
-        if(!qDate || !qAmount) return;
-        setOneOffs(x=>[{id:uid(), date:qDate, amount:Number(qAmount), note:qNote}, ...x]);
-        setQAmount(0); setQNote("");
       }
-      function removeOneOff(id){ setOneOffs(x=>x.filter(t=>t.id!==id)); }
+    });
+  },[user]);
 
-      // add recurring
-      const [rLabel,setRLabel]=useState("Paycheck");
-      const [rAmount,setRAmount]=useState(2500);
-      const [rFrequency,setRFrequency]=useState("BIWEEKLY");
-      const [rAnchor,setRAnchor]=useState(toISODate(new Date()));
-      const [rEnd,setREnd]=useState("");
-      function addRecurring(){
-        setRecurrings(x=>[{id:uid(), label:rLabel, amount:Number(rAmount), rule:{frequency:rFrequency, anchorDate:rAnchor}, endDate:rEnd||undefined}, ...x]);
-      }
-      function removeRecurring(id){ setRecurrings(x=>x.filter(r=>r.id!==id)); }
+  const [activeAccountId, setActiveAccountId] = useState(null);
+  useEffect(()=>{ if(accounts.length && !activeAccountId) setActiveAccountId(accounts[0].id); },[accounts, activeAccountId]);
 
-      if(!user){
-        return (
-          <div className="p-8 text-center">
-            <h1 className="text-2xl font-bold mb-4">Sofi Cashflow Tracker</h1>
-            <button
-              className="px-4 py-2 bg-blue-600 text-white rounded"
-              onClick={async ()=>{
-                try{
-                  await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider());
-                }catch(e){
-                  await auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider());
-                }
-              }}
-            >
-              Sign in with Google
-            </button>
+  const activeAccount = accounts.find(a=>a.id===activeAccountId);
+
+  // Derived: upcoming from one-offs + expanded recurrings for active account
+  const horizonStart = activeAccount?.asOfDate || todayISO();
+  const horizonEnd = toISODate(addDays(parseISO(horizonStart), lookaheadDays));
+
+  const upcoming = useMemo(()=>{
+    if(!activeAccount) return {items:[], projectedEnd:0, firstNegative:null};
+
+    const offs = transactions
+      .filter(t=>t.accountId===activeAccountId && t.date>=horizonStart && t.date<=horizonEnd)
+      .map(t=>({...t, kindLabel: t.kind==='transfer'? 'Transfer': 'One‑off'}));
+
+    const rec = [];
+    recurrings.filter(r=>r.accountId===activeAccountId).forEach(r=>{
+      const dates = enumerateOccurrences(r.rule, horizonStart, horizonEnd).filter(d=>!r.endDate || d<=r.endDate);
+      for(const d of dates){ rec.push({ id:`${r.id}-${d}`, date:d, amount:r.amount, note:r.label, kind:'recur', kindLabel:r.rule.frequency, cat:r.cat }); }
+    });
+
+    const all = [...offs, ...rec].sort((a,b)=> a.date.localeCompare(b.date));
+    let bal = Number(activeAccount.startingBalance||0);
+    const withRun = all.map(t=>{ bal += Number(t.amount); return {...t, runBalance: bal}; });
+    const projectedEnd = withRun.length ? withRun[withRun.length-1].runBalance : Number(activeAccount.startingBalance||0);
+    const firstNegative = withRun.find(t=> t.runBalance < 0) || null;
+    return { items: withRun, projectedEnd, firstNegative };
+  },[transactions, recurrings, activeAccountId, activeAccount, horizonStart, horizonEnd]);
+
+  // Budget monthly (simple)
+  const monthKey = new Date().toISOString().slice(0,7); // YYYY-MM
+  const budgets = useCollection(()=> user && db.collection('users').doc(user.uid).collection('budgets'), [user]);
+  const budgetDoc = budgets.find(b=>b.id===monthKey);
+  const budgetCategories = budgetDoc?.categories || {};
+
+  // Aggregate spend by category for current month
+  const monthStart = monthKey + '-01';
+  const monthEnd = toISODate(addMonths(parseISO(monthStart),1));
+  const spendByCat = useMemo(()=>{
+    const acc = {};
+    transactions
+      .filter(t=>t.accountId===activeAccountId && t.date>=monthStart && t.date<monthEnd && Number(t.amount)<0)
+      .forEach(t=>{ const c=t.cat||'Other'; acc[c]=(acc[c]||0)+Math.abs(Number(t.amount)); });
+    return acc;
+  },[transactions, activeAccountId, monthStart, monthEnd]);
+
+  // Chart data for running balance
+  const chartData = useMemo(()=>{
+    return upcoming.items.map(i=> ({ date:i.date, balance: Number(i.runBalance||0) }));
+  },[upcoming]);
+
+  // Actions: add/remove
+  async function addOneOff({date, amount, note, cat}){
+    if(!user || !activeAccountId) return;
+    await db.collection('users').doc(user.uid).collection('transactions').add({
+      date, amount:Number(amount), note, accountId:activeAccountId, kind:'oneoff', cat: cat||null
+    });
+  }
+  async function addRecurring({label, amount, frequency, anchorDate, endDate, cat}){
+    if(!user || !activeAccountId) return;
+    await db.collection('users').doc(user.uid).collection('recurrings').add({
+      label, amount:Number(amount), rule:{frequency, anchorDate}, endDate: endDate||null, accountId:activeAccountId, cat: cat||null
+    });
+  }
+  async function removeRecurring(id){ if(!user) return; await db.collection('users').doc(user.uid).collection('recurrings').doc(id).delete(); }
+  async function removeTransaction(id){ if(!user) return; await db.collection('users').doc(user.uid).collection('transactions').doc(id).delete(); }
+
+  async function addTransfer({date, amount, toAccountId, note}){
+    // amount should be negative for from-account; we will create two linked one-offs
+    if(!user || !activeAccountId || !toAccountId || toAccountId===activeAccountId) return;
+    const batch = db.batch();
+    const fromRef = db.collection('users').doc(user.uid).collection('transactions').doc();
+    const toRef = db.collection('users').doc(user.uid).collection('transactions').doc();
+    const amt = Number(amount);
+    batch.set(fromRef, { id: fromRef.id, date, amount: -Math.abs(amt), note: note||`Transfer to ${toAccountId}`, accountId: activeAccountId, kind:'transfer', cat:'Transfer', linkId: toRef.id });
+    batch.set(toRef,   { id: toRef.id,   date, amount:  Math.abs(amt), note: note||`Transfer from ${activeAccountId}`, accountId: toAccountId,   kind:'transfer', cat:'Transfer', linkId: fromRef.id });
+    await batch.commit();
+  }
+
+  // Account update
+  async function updateAccountBasics(partial){ if(!user||!activeAccountId) return; await db.collection('users').doc(user.uid).collection('accounts').doc(activeAccountId).set(partial, {merge:true}); }
+  async function addAccount(name){ if(!user) return; await db.collection('users').doc(user.uid).collection('accounts').add({ name, startingBalance:0, asOfDate: todayISO() }); }
+
+  // Budget save
+  async function saveBudget(newCats){ if(!user) return; await db.collection('users').doc(user.uid).collection('budgets').doc(monthKey).set({ categories:newCats }); }
+
+  if(!user){
+    return (
+      <div className="p-8 text-center">
+        <h1 className="text-2xl font-bold mb-4">Cashflow Pro</h1>
+        <button className="px-4 py-2 bg-blue-600 text-white rounded" onClick={async()=>{
+          try{ await auth.signInWithPopup(new firebase.auth.GoogleAuthProvider()); }
+          catch{ await auth.signInWithRedirect(new firebase.auth.GoogleAuthProvider()); }
+        }}>Sign in with Google</button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen w-full p-4 sm:p-8">
+      <div className="mx-auto max-w-7xl">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h1 className="text-2xl sm:text-3xl font-bold">Cashflow Pro</h1>
+            <div className="text-slate-600 text-sm">Multi‑account, budgets, transfers, and projections. Synced to your Google account.</div>
           </div>
-        );
-      }
-
-      const projectedBadge = upcoming.projectedEnd >= 0 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800";
-
-      return (
-        <div className="min-h-screen w-full bg-slate-50 p-4 sm:p-8">
-          <div className="mx-auto max-w-6xl">
-            <div className="flex items-center justify-between mb-4">
-              <h1 className="text-2xl sm:text-3xl font-bold">Cashflow Tracker</h1>
-              <button className="text-sm text-red-600" onClick={()=>auth.signOut()}>Sign out</button>
-            </div>
-
-            {/* Settings */}
-            <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-              <Card>
-                <div className="text-xs uppercase text-slate-500 mb-1">Account</div>
-                <input className="w-full rounded-xl border p-2" value={accountName} onChange={e=>setAccountName(e.target.value)} />
-              </Card>
-              <Card>
-                <div className="text-xs uppercase text-slate-500 mb-1">Starting balance (as of)</div>
-                <div className="flex gap-2">
-                  <input type="number" className="w-1/2 rounded-xl border p-2" value={startingBalance} onChange={e=>setStartingBalance(Number(e.target.value))} />
-                  <input type="date" className="w-1/2 rounded-xl border p-2" value={asOfDate} onChange={e=>setAsOfDate(e.target.value)} />
-                </div>
-              </Card>
-              <Card>
-                <div className="text-xs uppercase text-slate-500 mb-1">Lookahead window</div>
-                <div className="flex items-center gap-2">
-                  <input type="number" className="w-24 rounded-xl border p-2" value={lookaheadDays} onChange={e=>setLookaheadDays(Number(e.target.value))} />
-                  <span className="text-slate-600">days</span>
-                </div>
-              </Card>
-              <Card extra="items-center">
-                <div className="text-xs uppercase text-slate-500 mb-1">Projected @ end</div>
-                <div className={`inline-flex items-center rounded-full px-3 py-1 text-sm font-semibold ${projectedBadge}`}>
-                  ${upcoming.projectedEnd.toFixed(2)}
-                </div>
-              </Card>
-            </section>
-
-            {/* Adders */}
-            <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-              <div className="lg:col-span-2">
-                <Card>
-                  <h2 className="text-lg font-semibold mb-3">Add one-off</h2>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                    <input type="date" className="rounded-xl border p-2" value={qDate} onChange={e=>setQDate(e.target.value)} />
-                    <input type="number" className="rounded-xl border p-2" value={qAmount} onChange={e=>setQAmount(Number(e.target.value))} placeholder="Amount (+/-)" />
-                    <input type="text" className="rounded-xl border p-2" value={qNote} onChange={e=>setQNote(e.target.value)} placeholder="Note (Venmo, rent, etc.)" />
-                    <button onClick={addOneOff} className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow">Add</button>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-2">Income is positive (e.g., +2500), expenses negative (e.g., -125.73).</p>
-                </Card>
-              </div>
-
-              <div>
-                <Card>
-                  <h2 className="text-lg font-semibold mb-3">Add recurring</h2>
-                  <div className="grid grid-cols-2 gap-3">
-                    <input className="rounded-xl border p-2 col-span-2" value={rLabel} onChange={e=>setRLabel(e.target.value)} placeholder="Label (Paycheck, Rent)" />
-                    <input type="number" className="rounded-xl border p-2" value={rAmount} onChange={e=>setRAmount(Number(e.target.value))} placeholder="Amount" />
-                    <select className="rounded-xl border p-2" value={rFrequency} onChange={e=>setRFrequency(e.target.value)}>
-                      {FREQUENCIES.map(f=><option key={f.key} value={f.key}>{f.label}</option>)}
-                    </select>
-                    <div className="col-span-2 grid grid-cols-2 gap-3">
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">Anchor date</div>
-                        <input type="date" className="rounded-xl border p-2 w-full" value={rAnchor} onChange={e=>setRAnchor(e.target.value)} />
-                      </div>
-                      <div>
-                        <div className="text-xs text-slate-500 mb-1">End date (optional)</div>
-                        <input type="date" className="rounded-xl border p-2 w-full" value={rEnd} onChange={e=>setREnd(e.target.value)} />
-                      </div>
-                    </div>
-                    <button onClick={addRecurring} className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow col-span-2">Add recurring</button>
-                    <p className="text-xs text-slate-500 col-span-2">Biweekly uses the anchor as payday and repeats every 14 days.</p>
-                  </div>
-                </Card>
-              </div>
-            </section>
-
-            {/* Lists */}
-            <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-              <div className="lg:col-span-2">
-                <Card>
-                  <h2 className="text-lg font-semibold mb-3">Upcoming cashflow</h2>
-                  <div className="max-h-96 overflow-auto rounded-xl border">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-100 sticky top-0">
-                        <tr>
-                          <th className="text-left p-2">Date</th>
-                          <th className="text-left p-2">Kind</th>
-                          <th className="text-left p-2">Note</th>
-                          <th className="text-right p-2">Amount</th>
-                          <th className="text-right p-2">Running</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {upcoming.items.map(t=>(
-                          <tr key={t.id} className="border-t">
-                            <td className="p-2 font-mono">{t.date}</td>
-                            <td className="p-2">{t.kind}</td>
-                            <td className="p-2">{t.note || "—"}</td>
-                            <td className={`p-2 text-right font-mono ${t.amount>=0?"text-emerald-700":"text-rose-700"}`}>
-                              {t.amount>=0?"+":""}${Number(t.amount).toFixed(2)}
-                            </td>
-                            <td className={`p-2 text-right font-mono ${t.runBalance>=0?"text-slate-800":"text-rose-700"}`}>
-                              ${t.runBalance.toFixed(2)}
-                            </td>
-                          </tr>
-                        ))}
-                        {!upcoming.items.length && (
-                          <tr><td className="p-4 text-slate-500" colSpan="5">No items in window. Add one-offs or recurrings.</td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-                  {upcoming.firstNegative && (
-                    <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
-                      Heads up: you dip below $0 on <b>{upcoming.firstNegative.date}</b> with a projected balance of <b>${upcoming.firstNegative.runBalance.toFixed(2)}</b>.
-                    </div>
-                  )}
-                </Card>
-              </div>
-
-              <div className="flex flex-col gap-4">
-                <Card>
-                  <h3 className="font-semibold mb-2">Recurrings</h3>
-                  <ul className="space-y-2">
-                    {recurrings.map(r=>(
-                      <li key={r.id} className="flex items-start justify-between gap-2 rounded-xl border p-2 bg-white">
-                        <div>
-                          <div className="font-medium">{r.label}</div>
-                          <div className="text-xs text-slate-500">{r.rule.frequency} • anchor {r.rule.anchorDate}{r.endDate?` • ends ${r.endDate}`:""}</div>
-                        </div>
-                        <div className="text-right">
-                          <div className={`font-mono ${r.amount>=0?"text-emerald-700":"text-rose-700"}`}>{r.amount>=0?"+":""}${Number(r.amount).toFixed(2)}</div>
-                          <button onClick={()=>removeRecurring(r.id)} className="text-xs text-slate-500 hover:text-rose-700">Remove</button>
-                        </div>
-                      </li>
-                    ))}
-                    {!recurrings.length && <div className="text-sm text-slate-500">No recurrings yet.</div>}
-                  </ul>
-                </Card>
-
-                <Card>
-                  <h3 className="font-semibold mb-2">One-offs</h3>
-                  <ul className="space-y-2 max-h-64 overflow-auto">
-                    {oneOffs
-                      .slice()
-                      .sort((a,b)=>b.date.localeCompare(a.date))
-                      .map(t=>(
-                        <li key={t.id} className="flex items-start justify-between gap-2 rounded-xl border p-2 bg-white">
-                          <div>
-                            <div className="font-mono text-xs text-slate-500">{t.date}</div>
-                            <div>{t.note || "—"}</div>
-                          </div>
-                          <div className="text-right">
-                            <div className={`font-mono ${t.amount>=0?"text-emerald-700":"text-rose-700"}`}>{t.amount>=0?"+":""}${Number(t.amount).toFixed(2)}</div>
-                            <button onClick={()=>removeOneOff(t.id)} className="text-xs text-slate-500 hover:text-rose-700">Remove</button>
-                          </div>
-                        </li>
-                      ))}
-                    {!oneOffs.length && <div className="text-sm text-slate-500">No one-offs yet.</div>}
-                  </ul>
-                </Card>
-              </div>
-            </section>
-
-            <footer className="mt-8 text-xs text-slate-500">
-              <p>Synced to Firestore for your Google account. Want SoFi auto-import later? We can add Plaid.</p>
-            </footer>
+          <div className="flex items-center gap-2">
+            <button className="text-sm text-slate-600" onClick={()=>auth.signOut()}>Sign out</button>
           </div>
         </div>
-      );
-    }
 
-    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-  </script>
+        {/* Account picker & basics */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          <Card>
+            <SectionTitle>Accounts</SectionTitle>
+            <div className="flex gap-2 mb-2">
+              <select className="border rounded-xl p-2 flex-1" value={activeAccountId||''} onChange={e=>setActiveAccountId(e.target.value)}>
+                {accounts.map(a=> <option key={a.id} value={a.id}>{a.name}</option>)}
+              </select>
+              <button className="rounded-xl px-3 py-2 bg-slate-900 text-white" onClick={()=>{
+                const name = prompt('New account name','Savings'); if(name) addAccount(name);
+              }}>+ Add</button>
+            </div>
+            {activeAccount && (
+              <div className="grid grid-cols-2 gap-2">
+                <div className="text-xs text-slate-500">As of</div>
+                <input type="date" className="border rounded-xl p-2" value={activeAccount.asOfDate} onChange={e=>updateAccountBasics({asOfDate:e.target.value})}/>
+                <div className="text-xs text-slate-500">Starting balance</div>
+                <input type="number" className="border rounded-xl p-2" value={activeAccount.startingBalance} onChange={e=>updateAccountBasics({startingBalance:Number(e.target.value)})}/>
+              </div>
+            )}
+          </Card>
+
+          <Card>
+            <SectionTitle>Lookahead</SectionTitle>
+            <div className="flex items-center gap-2">
+              <input type="number" className="w-24 rounded-xl border p-2" value={lookaheadDays} onChange={e=>setLookaheadDays(Number(e.target.value))} />
+              <span className="text-slate-600">days</span>
+            </div>
+            {activeAccount && (
+              <div className="mt-3 text-sm">Projected @ end: <span className={`${(upcoming.projectedEnd>=0)?'text-emerald-700':'text-rose-700'} font-semibold`}>${(upcoming.projectedEnd||0).toFixed(2)}</span></div>
+            )}
+          </Card>
+
+          <Card>
+            <SectionTitle>Budget ({monthKey})</SectionTitle>
+            <div className="space-y-2 max-h-40 overflow-auto pr-1">
+              {cats.map(name=>{
+                const val = budgetCategories[name] ?? 0;
+                return (
+                  <div key={name} className="flex items-center gap-2">
+                    <div className="w-28 text-sm">{name}</div>
+                    <input type="number" className="border rounded-xl p-1 w-28" value={val}
+                      onChange={e=>{
+                        const n = Number(e.target.value||0); const next={...budgetCategories, [name]: n}; saveBudget(next);
+                      }} />
+                    <div className="text-xs text-slate-500">spent: ${ (spendByCat[name]||0).toFixed(0) }</div>
+                  </div>
+                );
+              })}
+            </div>
+            <button className="mt-2 text-xs text-slate-600" onClick={()=>{
+              const newName = prompt('New category name'); if(newName){ setCats([...cats,newName]); const next={...budgetCategories, [newName]:0}; saveBudget(next); }
+            }}>+ Add category</button>
+          </Card>
+        </section>
+
+        {/* Adders */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+          <Card className="lg:col-span-2">
+            <SectionTitle>Add one‑off</SectionTitle>
+            <OneOffForm cats={cats} onAdd={addOneOff} />
+          </Card>
+          <Card>
+            <SectionTitle>Add recurring</SectionTitle>
+            <RecurringForm cats={cats} onAdd={addRecurring} />
+          </Card>
+        </section>
+
+        {/* Transfers */}
+        <section className="mb-6">
+          <Card>
+            <SectionTitle>Transfer between accounts</SectionTitle>
+            <TransferForm accounts={accounts} activeAccountId={activeAccountId} onTransfer={addTransfer} />
+          </Card>
+        </section>
+
+        {/* Upcoming + lists */}
+        <section className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card className="lg:col-span-2">
+            <SectionTitle>Upcoming cashflow</SectionTitle>
+            <div className="max-h-96 overflow-auto rounded-xl border">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 sticky top-0">
+                  <tr>
+                    <th className="text-left p-2">Date</th>
+                    <th className="text-left p-2">Kind</th>
+                    <th className="text-left p-2">Note</th>
+                    <th className="text-left p-2">Cat</th>
+                    <th className="text-right p-2">Amount</th>
+                    <th className="text-right p-2">Running</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {upcoming.items.map(t=> (
+                    <tr key={t.id} className="border-t">
+                      <td className="p-2 font-mono">{t.date}</td>
+                      <td className="p-2">{t.kindLabel}</td>
+                      <td className="p-2">{t.note||'—'}</td>
+                      <td className="p-2">{t.cat||'—'}</td>
+                      <td className={`p-2 text-right font-mono ${Number(t.amount)>=0?'text-emerald-700':'text-rose-700'}`}>{Number(t.amount)>=0?'+':''}${Number(t.amount).toFixed(2)}</td>
+                      <td className={`p-2 text-right font-mono ${Number(t.runBalance)>=0?'text-slate-800':'text-rose-700'}`}>${Number(t.runBalance).toFixed(2)}</td>
+                    </tr>
+                  ))}
+                  {!upcoming.items.length && <tr><td className="p-4 text-slate-500" colSpan="6">No items in window.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+            {upcoming.firstNegative && (
+              <div className="mt-3 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                Heads up: you dip below $0 on <b>{upcoming.firstNegative.date}</b> with a projected balance of <b>${upcoming.firstNegative.runBalance.toFixed(2)}</b>.
+              </div>
+            )}
+          </Card>
+          <div className="flex flex-col gap-4">
+            <Card>
+              <SectionTitle>Recurrings</SectionTitle>
+              <ul className="space-y-2">
+                {recurrings.filter(r=>r.accountId===activeAccountId).map(r=> (
+                  <li key={r.id} className="flex items-start justify-between gap-2 rounded-xl border p-2 bg-white">
+                    <div>
+                      <div className="font-medium">{r.label}</div>
+                      <div className="text-xs text-slate-500">{r.rule.frequency} • anchor {r.rule.anchorDate}{r.endDate?` • ends ${r.endDate}`:''}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className={`font-mono ${r.amount>=0?'text-emerald-700':'text-rose-700'}`}>{r.amount>=0?'+':''}${Number(r.amount).toFixed(2)}</div>
+                      <button onClick={()=>removeRecurring(r.id)} className="text-xs text-slate-500 hover:text-rose-700">Remove</button>
+                    </div>
+                  </li>
+                ))}
+                {!recurrings.filter(r=>r.accountId===activeAccountId).length && <div className="text-sm text-slate-500">No recurrings yet.</div>}
+              </ul>
+            </Card>
+
+            <Card>
+              <SectionTitle>One‑offs</SectionTitle>
+              <ul className="space-y-2 max-h-64 overflow-auto">
+                {transactions
+                  .filter(t=>t.accountId===activeAccountId && t.kind!=='recur')
+                  .slice()
+                  .sort((a,b)=> b.date.localeCompare(a.date))
+                  .map(t=> (
+                    <li key={t.id} className="flex items-start justify-between gap-2 rounded-xl border p-2 bg-white">
+                      <div>
+                        <div className="font-mono text-xs text-slate-500">{t.date}</div>
+                        <div>{t.note||'—'}</div>
+                        <div className="text-xs text-slate-500">{t.cat||'—'}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className={`font-mono ${t.amount>=0?'text-emerald-700':'text-rose-700'}`}>{t.amount>=0?'+':''}${Number(t.amount).toFixed(2)}</div>
+                        <button onClick={()=>removeTransaction(t.id)} className="text-xs text-slate-500 hover:text-rose-700">Remove</button>
+                      </div>
+                    </li>
+                  ))}
+                {!transactions.filter(t=>t.accountId===activeAccountId).length && <div className="text-sm text-slate-500">No one‑offs yet.</div>}
+              </ul>
+            </Card>
+          </div>
+        </section>
+
+        {/* Chart */}
+        <section className="mt-6">
+          <Card>
+            <SectionTitle>Projection chart</SectionTitle>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="colorBal" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#8884d8" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#8884d8" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="date" />
+                  <YAxis />
+                  <Tooltip />
+                  <Area type="monotone" dataKey="balance" stroke="#8884d8" fillOpacity={1} fill="url(#colorBal)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </Card>
+        </section>
+
+        <footer className="mt-8 text-xs text-slate-500">
+          <p>Security: Firestore rules should restrict access to your UID only. (Build → Firestore → Rules)</p>
+          <p className="mt-1">Next up: Plaid import, CSV export, and mobile‑first tweaks.</p>
+        </footer>
+      </div>
+    </div>
+  );
+}
+
+/******************
+ * Forms
+ ******************/
+function OneOffForm({onAdd, cats}){
+  const [date,setDate]=useState(todayISO());
+  const [amount,setAmount]=useState(0);
+  const [note,setNote]=useState('');
+  const [cat,setCat]=useState('Other');
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+      <input type="date" className="rounded-xl border p-2" value={date} onChange={e=>setDate(e.target.value)} />
+      <input type="number" className="rounded-xl border p-2" value={amount} onChange={e=>setAmount(Number(e.target.value))} placeholder="Amount (+/‑)" />
+      <input type="text" className="rounded-xl border p-2 sm:col-span-2" value={note} onChange={e=>setNote(e.target.value)} placeholder="Note" />
+      <select className="rounded-xl border p-2" value={cat} onChange={e=>setCat(e.target.value)}>
+        {cats.map(c=> <option key={c} value={c}>{c}</option>)}
+      </select>
+      <button onClick={()=>onAdd({date,amount,note,cat})} className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow sm:col-span-1 col-span-2">Add</button>
+      <p className="text-xs text-slate-500 col-span-2 sm:col-span-5">Income is positive (e.g., +2500), expenses negative (e.g., -125.73).</p>
+    </div>
+  );
+}
+
+function RecurringForm({onAdd, cats}){
+  const [label,setLabel]=useState('Paycheck');
+  const [amount,setAmount]=useState(2500);
+  const [frequency,setFrequency]=useState('BIWEEKLY');
+  const [anchor,setAnchor]=useState(todayISO());
+  const [endDate,setEndDate]=useState('');
+  const [cat,setCat]=useState('Income');
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      <input className="rounded-xl border p-2 col-span-2" value={label} onChange={e=>setLabel(e.target.value)} placeholder="Label (Paycheck, Rent)" />
+      <input type="number" className="rounded-xl border p-2" value={amount} onChange={e=>setAmount(Number(e.target.value))} />
+      <select className="rounded-xl border p-2" value={frequency} onChange={e=>setFrequency(e.target.value)}>
+        {FREQUENCIES.map(f=> <option key={f.key} value={f.key}>{f.label}</option>)}
+      </select>
+      <div className="col-span-2 grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-xs text-slate-500 mb-1">Anchor date</div>
+          <input type="date" className="rounded-xl border p-2 w-full" value={anchor} onChange={e=>setAnchor(e.target.value)} />
+        </div>
+        <div>
+          <div className="text-xs text-slate-500 mb-1">End date (optional)</div>
+          <input type="date" className="rounded-xl border p-2 w-full" value={endDate} onChange={e=>setEndDate(e.target.value)} />
+        </div>
+      </div>
+      <div className="col-span-2 grid grid-cols-2 gap-3">
+        <div>
+          <div className="text-xs text-slate-500 mb-1">Category</div>
+          <select className="rounded-xl border p-2 w-full" value={cat} onChange={e=>setCat(e.target.value)}>
+            {cats.map(c=> <option key={c} value={c}>{c}</option>)}
+          </select>
+        </div>
+      </div>
+      <button onClick={()=>onAdd({label,amount,frequency,anchorDate:anchor,endDate, cat})} className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow col-span-2">Add recurring</button>
+      <p className="text-xs text-slate-500 col-span-2">Biweekly uses the anchor as payday and repeats every 14 days.</p>
+    </div>
+  );
+}
+
+function TransferForm({accounts, activeAccountId, onTransfer}){
+  const [date,setDate]=useState(todayISO());
+  const [amount,setAmount]=useState(0);
+  const [toId,setToId]=useState('');
+  const [note,setNote]=useState('');
+  useEffect(()=>{
+    const other = accounts.find(a=>a.id!==activeAccountId); if(other) setToId(other.id);
+  },[accounts, activeAccountId]);
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+      <input type="date" className="rounded-xl border p-2" value={date} onChange={e=>setDate(e.target.value)} />
+      <input type="number" className="rounded-xl border p-2" value={amount} onChange={e=>setAmount(Number(e.target.value))} placeholder="Amount" />
+      <select className="rounded-xl border p-2" value={toId} onChange={e=>setToId(e.target.value)}>
+        {accounts.filter(a=>a.id!==activeAccountId).map(a=> <option key={a.id} value={a.id}>{a.name}</option>)}
+      </select>
+      <input type="text" className="rounded-xl border p-2" value={note} onChange={e=>setNote(e.target.value)} placeholder="Note (optional)" />
+      <button onClick={()=>onTransfer({date, amount, toAccountId:toId, note})} className="rounded-xl px-4 py-2 bg-blue-600 text-white shadow">Transfer</button>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
 </body>
 </html>
